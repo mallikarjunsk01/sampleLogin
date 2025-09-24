@@ -1,0 +1,36 @@
+# .github/workflows/ai_updater.yml
+name: AI Script Updater
+# This action is triggered when an issue is opened or edited and has the "ai-update" label.
+on:
+ issues:
+   types: [labeled]
+jobs:
+ update-script:
+   # Run the job only if the added label is 'ai-update'
+   if: github.event.label.name == 'ai-update'
+   runs-on: ubuntu-latest
+   permissions:
+     issues: write      # to post comments on the issue
+     contents: write    # to create branches and commit files
+     pull-requests: write # to create pull requests
+   steps:
+     - name: Checkout repository
+       uses: actions/checkout@v4
+     - name: Set up Python
+       uses: actions/setup-python@v5
+       with:
+         python-version: '3.10'
+     - name: Install dependencies
+       run: |
+         python -m pip install --upgrade pip
+         pip install -r scripts/requirements.txt
+     - name: Run AI Updater Script
+       env:
+         # The GITHUB_TOKEN is automatically created by GitHub Actions.
+         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+         # The GEMINI_API_KEY must be created as a repository secret.
+         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+         # Pass issue details to the Python script.
+         GITHUB_REPOSITORY: ${{ github.repository }}
+         ISSUE_NUMBER: ${{ github.event.issue.number }}
+       run: python scripts/ai_updater.py
