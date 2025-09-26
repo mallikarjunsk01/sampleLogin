@@ -21,7 +21,7 @@ def main():
    repo = g.get_repo(repo_name)
    # Configure Gemini AI
    genai.configure(api_key=gemini_api_key)
-   model = genai.GenerativeModel('gemini-1.5-flash') # Using a fast and capable model
+   model = genai.GenerativeModel('gemini-2.5-flash') # Using a fast and capable model
    # --- 3. Get Issue Details ---
    issue = repo.get_issue(number=issue_number)
    issue_title = issue.title
