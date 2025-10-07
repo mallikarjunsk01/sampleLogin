@@ -1,3 +1,4 @@
+```python
 # your_automation_files/test_example.py
 import pytest
 def test_addition():
@@ -6,3 +7,7 @@ def test_addition():
 def test_subtraction():
    """Tests that 5 - 3 equals 2."""
    assert 5 - 3 == 2
+def test_multiplication():
+   """Tests that 10 * 2 equals 20."""
+   assert 10 * 2 == 20
+```
