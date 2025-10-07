@@ -6,3 +6,6 @@ def test_addition():
 def test_subtraction():
    """Tests that 5 - 3 equals 2."""
    assert 5 - 3 == 2
+def test_multiplication():
+   """Tests that 10 * 8 equals 80."""
+   assert 10 * 8 == 80
