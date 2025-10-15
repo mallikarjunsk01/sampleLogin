@@ -42,6 +42,46 @@ def build_related_lookup(raw_mapping: dict[str, list[str]]) -> dict[str, list[st
 RELATED_FILES = build_related_lookup(RAW_RELATED_FILES)
 
 
+def extract_step_texts(feature_content: str) -> list[str]:
+    """Return the list of step texts (without the Given/When/Then keyword)."""
+    prefixes = ("Given", "When", "Then", "And", "But")
+    step_texts: list[str] = []
+
+    for line in feature_content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        for prefix in prefixes:
+            token = f"{prefix} "
+            if stripped.startswith(token):
+                text = stripped[len(token) :]
+                if text:
+                    step_texts.append(text)
+                break
+
+    return step_texts
+
+
+def ensure_steps_have_definitions(step_texts: list[str], java_content: str) -> list[str]:
+    """Return any step texts that are missing corresponding Java annotations."""
+    if not step_texts:
+        return []
+
+    normalized_java = java_content.replace(r"\"", '"')
+    missing: list[str] = []
+
+    for step in step_texts:
+        escaped = step.replace('"', r'\"')
+        raw_pattern = f'("{step}")'
+        escaped_pattern = f'("{escaped}")'
+        if raw_pattern in normalized_java or escaped_pattern in java_content:
+            continue
+        missing.append(step)
+
+    return missing
+
+
 def main() -> None:
     """Main function to orchestrate the AI-powered code update process."""
     # --- 1. Get required variables from GitHub Actions environment ---
@@ -155,6 +195,39 @@ def main() -> None:
             "AI Agent: The AI response did not include updates for the following files: " + ", ".join(missing_files)
         )
         print(f"Error: Missing files in AI response: {missing_files}")
+        return
+
+    # --- 7b. Validate step definitions cover all feature steps ---
+    validation_errors: list[str] = []
+    for feature_path in [path for path in files_to_update if path.endswith(".feature")]:
+        feature_content = updated_files.get(feature_path)
+        if not feature_content:
+            continue
+
+        step_texts = extract_step_texts(feature_content)
+        if not step_texts:
+            continue
+
+        for related_path in RELATED_FILES.get(feature_path, []):
+            if not related_path.endswith(".java"):
+                continue
+            java_content = updated_files.get(related_path)
+            if java_content is None:
+                continue
+            missing_steps = ensure_steps_have_definitions(step_texts, java_content)
+            if missing_steps:
+                formatted = "; ".join(f'"{step}"' for step in missing_steps)
+                validation_errors.append(
+                    f"Missing step definitions in `{related_path}` for: {formatted}"
+                )
+
+    if validation_errors:
+        message = "\n".join(validation_errors)
+        issue.create_comment(
+            "AI Agent: I could not complete the update because some feature steps are missing matching Java step definitions.\n"
+            + message
+        )
+        print(f"Error: Step definition validation failed. {message}")
         return
 
     # --- 8. Create a new branch and commit the changes ---
