@@ -1,7 +1,18 @@
 # scripts/ai_updater.py
 import os
+import re
+
 import google.generativeai as genai
 from github import Github, GithubException
+
+
+# Mapping of primary files to any related files that must stay in sync
+RELATED_FILES = {
+    "src/test/resources/features/login.feature": [
+        "src/test/java/com/example/steps/LoginSteps.java",
+    ],
+}
+
 def main():
    """
    Main function to orchestrate the AI-powered code update process.
@@ -34,29 +45,51 @@ def main():
        print("Error: Could not find 'File: <path>' in the issue body.")
        issue.create_comment("AI Agent: I couldn't find the `File: <path>` in your issue description. Please specify the file to update.")
        return
-   # --- 4. Get the content of the file to be updated ---
-   try:
-       file_content_obj = repo.get_contents(file_to_update)
-       original_file_content = file_content_obj.decoded_content.decode("utf-8")
-   except GithubException:
-       print(f"Error: Could not find the file '{file_to_update}' in the repository.")
-       issue.create_comment(f"AI Agent: I couldn't find the file `{file_to_update}` in the repository. Please check the path.")
-       return
+   # --- 4. Gather the content for all files that must be updated together ---
+   files_to_update = [file_to_update] + RELATED_FILES.get(file_to_update, [])
+   file_objects = {}
+   original_contents = {}
+
+   for path in files_to_update:
+       try:
+           file_obj = repo.get_contents(path)
+           file_objects[path] = file_obj
+           original_contents[path] = file_obj.decoded_content.decode("utf-8")
+       except GithubException:
+           print(f"Error: Could not find the file '{path}' in the repository.")
+           issue.create_comment(f"AI Agent: I couldn't find the file `{path}` in the repository. Please check the path.")
+           return
    # --- 5. Build the Prompt for the AI ---
-   prompt = f"""
-   You are an expert software developer specializing in automation scripts. Your task is to update a Python script based on a user's request.
-   **User's Request:**
-   {issue_title}
-   {issue_body}
-   **Original Python Script (`{file_to_update}`):**
-   ```python
-   {original_file_content}
-   ```
-   **Your Instructions:**
-   1. Carefully read the user's request and the original script.
-   2. Modify the script to implement the requested changes.
-   3. IMPORTANT: Your response must ONLY contain the full, updated Python code for the script. Do not include any explanations, greetings, or markdown formatting like ```python. Just the raw code.
-   """
+   file_sections = []
+   for path, content in original_contents.items():
+       if path.endswith(".py"):
+           fence = "python"
+       elif path.endswith(".feature"):
+           fence = "gherkin"
+       elif path.endswith(".java"):
+           fence = "java"
+       else:
+           fence = "text"
+       file_sections.append(
+           f"**Original File (`{path}`):**\n```{fence}\n{content}\n```"
+       )
+
+   file_sections_text = "\n".join(file_sections)
+   prompt = (
+       "You are an expert software developer specializing in test automation. Your task is to update the provided files so they stay consistent with the user's request.\n"
+       "**User's Request:**\n"
+       f"{issue_title}\n{issue_body}\n"
+       f"{file_sections_text}\n"
+       "**Your Instructions:**\n"
+       "1. Carefully review every file and update them to satisfy the request.\n"
+       "2. Keep the feature files and their step definitions in sync when scenarios change.\n"
+       "3. Respond using this exact format for each file (include all files listed above even if unchanged):\n"
+       "<<<<<FILE:relative/path>>>>>>\n"
+       "<entire updated file content>\n"
+       "<<<<<END FILE>>>>>\n"
+       "Repeat the file block for every file you are returning.\n"
+       "4. Do not include any additional commentary, explanations, or markdown beyond the required file blocks."
+   )
    # --- 6. Call the Gemini AI API ---
    print("Calling Gemini API...")
    try:
@@ -69,7 +102,24 @@ def main():
        print(f"Error calling Gemini API: {e}")
        issue.create_comment(f"AI Agent: I encountered an error with the AI model. It said: `{e}`. Please try again or rephrase your request.")
        return
-   # --- 7. Create a new branch and commit the changes ---
+   # --- 7. Parse the AI response into individual file updates ---
+   file_blocks = re.findall(r"<<<<<FILE:(.*?)>>>>>>\n(.*?)\n<<<<<END FILE>>>>>", updated_code, re.DOTALL)
+   if not file_blocks:
+       issue.create_comment("AI Agent: I could not parse the AI response. Please ensure the instructions are followed and try again.")
+       print("Error: AI response missing formatted file blocks.")
+       return
+
+   updated_files = {path.strip(): content for path, content in file_blocks}
+
+   # Ensure every required file is present in the response
+   missing_files = [path for path in files_to_update if path not in updated_files]
+   if missing_files:
+       issue.create_comment(
+           "AI Agent: The AI response did not include updates for the following files: " + ", ".join(missing_files)
+       )
+       print(f"Error: Missing files in AI response: {missing_files}")
+       return
+   # --- 8. Create a new branch and commit the changes ---
    new_branch_name = f"ai-update-issue-{issue_number}"
    source_branch = repo.get_branch(repo.default_branch)
    # Create new branch from default branch
@@ -80,17 +130,20 @@ def main():
            print(f"Branch {new_branch_name} already exists. Skipping branch creation.")
        else:
            raise e
-   # Commit the updated file to the new branch
-   commit_message = f"feat: AI updates script based on issue #{issue_number}"
-   repo.update_file(
-       path=file_to_update,
-       message=commit_message,
-       content=updated_code,
-       sha=file_content_obj.sha,
-       branch=new_branch_name
-   )
+   # Commit the updated files to the new branch
+   commit_message = f"feat: AI updates files based on issue #{issue_number}"
+   for idx, path in enumerate(files_to_update):
+       new_content = updated_files[path]
+       file_obj = file_objects[path]
+       repo.update_file(
+           path=path,
+           message=commit_message if idx == 0 else f"{commit_message} ({path})",
+           content=new_content,
+           sha=file_obj.sha,
+           branch=new_branch_name
+       )
    print(f"Changes committed to branch {new_branch_name}.")
-   # --- 8. Create a Pull Request ---
+   # --- 9. Create a Pull Request ---
    pr_title = f"AI Update for Issue #{issue_number}: {issue_title}"
    pr_body = f"""
    This PR was automatically generated by an AI agent in response to issue #{issue_number}.
@@ -108,8 +161,8 @@ def main():
        print(f"Pull Request created: {pr.html_url}")
        issue.create_comment(f"AI Agent: I have created a Pull Request with the requested changes. You can review it here: {pr.html_url}")
    except GithubException as e:
-        print(f"Could not create PR. It might already exist. Error: {e}")
-        issue.create_comment(f"AI Agent: I've pushed the changes to the `{new_branch_name}` branch, but I couldn't create a Pull Request. It might already exist.")
+       print(f"Could not create PR. It might already exist. Error: {e}")
+       issue.create_comment(f"AI Agent: I've pushed the changes to the `{new_branch_name}` branch, but I couldn't create a Pull Request. It might already exist.")
 
 if __name__ == "__main__":
    main()
