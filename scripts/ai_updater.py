@@ -8,7 +8,7 @@ from github import Github, GithubException
 
 
 # Mapping of primary files to any related files that must stay in sync
-RELATED_FILES = {
+RAW_RELATED_FILES = {
     "src/test/resources/features/login.feature": [
         "src/test/java/com/example/steps/LoginSteps.java",
     ],
@@ -23,6 +23,23 @@ def normalize_repo_path(path: str) -> str:
     while "//" in normalized:
         normalized = normalized.replace("//", "/")
     return normalized
+
+
+def build_related_lookup(raw_mapping: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Normalize the related-files mapping and make it bi-directional."""
+    related: dict[str, set[str]] = {}
+    for primary, related_list in raw_mapping.items():
+        primary_norm = normalize_repo_path(primary)
+        rel_norm = [normalize_repo_path(item) for item in related_list]
+
+        related.setdefault(primary_norm, set()).update(rel_norm)
+        for rel in rel_norm:
+            related.setdefault(rel, set()).add(primary_norm)
+
+    return {path: sorted(peers) for path, peers in related.items()}
+
+
+RELATED_FILES = build_related_lookup(RAW_RELATED_FILES)
 
 
 def main() -> None:
@@ -61,6 +78,7 @@ def main() -> None:
 
     # --- 4. Gather the content for all files that must be updated together ---
     files_to_update = [file_to_update] + RELATED_FILES.get(file_to_update, [])
+    files_to_update = list(dict.fromkeys(files_to_update))
     file_objects = {}
     original_contents = {}
 
