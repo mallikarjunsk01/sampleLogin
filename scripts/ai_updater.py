@@ -85,6 +85,29 @@ def ensure_steps_have_definitions(step_texts: list[str], java_content: str) -> l
     return missing
 
 
+def resolve_file_in_repo(repo, path: str):
+    """Resolve a repo file path, tolerating leading directory aliases."""
+    normalized = normalize_repo_path(path)
+    segments = normalized.split("/")
+    candidates = [normalized]
+    for index in range(1, len(segments)):
+        candidate = "/".join(segments[index:])
+        if candidate:
+            candidates.append(candidate)
+
+    last_error: GithubException | None = None
+    for candidate in candidates:
+        try:
+            file_obj = repo.get_contents(candidate)
+            return candidate, file_obj
+        except GithubException as exc:  # store and keep trying shorter paths
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise GithubException(status=404, data={"message": f"File '{path}' not found."}, headers={})
+
+
 def main() -> None:
     """Main function to orchestrate the AI-powered code update process."""
     # --- 1. Get required variables from GitHub Actions environment ---
@@ -128,22 +151,36 @@ def main() -> None:
         return
 
     # --- 4. Gather the content for all files that must be updated together ---
-    files_to_update = [file_to_update] + RELATED_FILES.get(file_to_update, [])
-    files_to_update = list(dict.fromkeys(files_to_update))
+    try:
+        resolved_primary_path, primary_file_obj = resolve_file_in_repo(repo, file_to_update)
+    except GithubException:
+        print(f"Error: Could not find the file '{file_to_update}' in the repository.")
+        issue.create_comment(
+            f"AI Agent: I couldn't find the file `{file_to_update}` in the repository. Please check the path."
+        )
+        return
+
+    files_to_update = [resolved_primary_path] + RELATED_FILES.get(resolved_primary_path, [])
     file_objects = {}
     original_contents = {}
+    resolved_paths: list[str] = []
 
     for path in files_to_update:
         try:
-            file_obj = repo.get_contents(path)
-            file_objects[path] = file_obj
-            original_contents[path] = file_obj.decoded_content.decode("utf-8")
+            resolved_path, file_obj = resolve_file_in_repo(repo, path)
         except GithubException:
             print(f"Error: Could not find the file '{path}' in the repository.")
             issue.create_comment(
                 f"AI Agent: I couldn't find the file `{path}` in the repository. Please check the path."
             )
             return
+
+        if resolved_path not in file_objects:
+            file_objects[resolved_path] = file_obj
+            original_contents[resolved_path] = file_obj.decoded_content.decode("utf-8")
+        resolved_paths.append(resolved_path)
+
+    files_to_update = list(dict.fromkeys(resolved_paths))
 
     # --- 5. Build the Prompt for the AI ---
     file_sections = []
