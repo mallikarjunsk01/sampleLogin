@@ -15,6 +15,9 @@ RAW_RELATED_FILES = {
 }
 
 
+FILE_DIRECTIVE_PATTERN = re.compile(r"^\s*(?:[-*]\s*)?File\s*:\s*(.+)$", re.IGNORECASE)
+
+
 def normalize_repo_path(path: str) -> str:
     """Convert user-supplied paths to normalized repo paths."""
     normalized = path.strip().replace("\\", "/")
@@ -106,8 +109,16 @@ def main() -> None:
     issue_title = issue.title
     issue_body = issue.body or ""
 
+    raw_file_path: str | None = None
+    for line in issue_body.split("\n"):
+        match = FILE_DIRECTIVE_PATTERN.match(line)
+        if match:
+            raw_file_path = match.group(1).strip()
+            break
+
     try:
-        raw_file_path = [line.split("File:", 1)[1].strip() for line in issue_body.split("\n") if "File:" in line][0]
+        if raw_file_path is None:
+            raise IndexError
         file_to_update = normalize_repo_path(raw_file_path)
     except IndexError:
         print("Error: Could not find 'File: <path>' in the issue body.")
