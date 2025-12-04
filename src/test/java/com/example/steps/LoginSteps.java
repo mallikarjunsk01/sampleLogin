@@ -31,8 +31,8 @@ public class LoginSteps {
             + "</script></body></html>");
     }
 
-    @When("I enter valid credentials")
-    public void i_enter_valid_credentials() {
+    @When("I enter valid credentials it should show green checks")
+    public void i_enter_valid_credentials_it_should_show_green_checks() {
         driver.findElement(By.id("username")).sendKeys("demo");
         driver.findElement(By.id("password")).sendKeys("demo123");
         driver.findElement(By.id("login")).click();
