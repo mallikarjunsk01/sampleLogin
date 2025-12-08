@@ -1,4 +1,3 @@
-
 Feature: Login
 
   Scenario: Successful login
@@ -10,3 +9,10 @@ Feature: Login
     #Given I am on the login page
     #When I enter invalid credentials
     #Then I should see an error message
+
+  Scenario: Cart out on page
+    Given I am on the login page ui
+    When I enter valid credentials and log in will be on page
+    And I open my profile menu and check if im login not
+    Then im clicking on cart out option
+    Then I should be able to delete the iteam from cart successfully
