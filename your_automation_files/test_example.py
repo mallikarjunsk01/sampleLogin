@@ -6,9 +6,9 @@ Feature: Login
     Then I should see the home page
 
   Scenario: Invalid login
-    #Given I am on the login page
-    #When I enter invalid credentials
-    #Then I should see an error message
+    Given I am on the login page
+    When I enter invalid credentials
+    Then I should see an error message
 
   Scenario: Logout from profile
     Given I am on the login page
